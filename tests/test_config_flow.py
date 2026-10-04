@@ -1,6 +1,7 @@
 """The pairing flow."""
 
 from homeassistant import config_entries
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -74,6 +75,13 @@ async def test_reauth_replaces_the_token(hass: HomeAssistant, aioclient_mock) ->
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "reauth_successful"
     assert entry.data[CONF_TOKEN] == "nxh_new"
+    # The flow reloads the entry in the background; let that finish (the entry
+    # syncs with the new token), then unload it so its 5-minute signal timer is
+    # cancelled — otherwise teardown races the reload and sees a lingering timer.
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.LOADED
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
 
 
 async def test_reauth_with_another_projects_code(hass: HomeAssistant, aioclient_mock) -> None:
