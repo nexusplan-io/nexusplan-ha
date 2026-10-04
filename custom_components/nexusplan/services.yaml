@@ -1,0 +1,12 @@
+sync_now:
+  fields:
+    config_entry_id:
+      selector:
+        config_entry:
+          integration: nexusplan
+get_map:
+  fields:
+    config_entry_id:
+      selector:
+        config_entry:
+          integration: nexusplan

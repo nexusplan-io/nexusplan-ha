@@ -1,0 +1,98 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to NexusPlan",
+        "description": "In NexusPlan, open your project and go to Planners → Home Assistant → Connect Home Assistant. Enter the code it shows. Codes last 10 minutes.\n\nThis integration only reads your setup and sends it to NexusPlan; it never controls a device.",
+        "data": {
+          "code": "Pairing code"
+        },
+        "data_description": {
+          "code": "8 characters, like ABCD-1234."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Advanced",
+            "description": "Only for a NexusPlan development server.",
+            "data": {
+              "base_url": "NexusPlan address"
+            }
+          }
+        }
+      },
+      "reauth_confirm": {
+        "title": "Reconnect to NexusPlan",
+        "description": "The link to “{project}” was disconnected. Create a new code in NexusPlan (Planners → Home Assistant → Connect Home Assistant) and enter it here.",
+        "data": {
+          "code": "Pairing code"
+        }
+      }
+    },
+    "error": {
+      "invalid_code": "That code is not valid. It may have expired or already been used — create a new one in NexusPlan.",
+      "cannot_connect": "Could not reach NexusPlan. Check this Home Assistant can reach the internet.",
+      "unknown": "Something unexpected went wrong. Check the logs.",
+      "rate_limited": "Too many attempts. Wait ten minutes, then create a new code in NexusPlan and try again."
+    },
+    "abort": {
+      "already_configured": "This NexusPlan project is already connected.",
+      "reauth_successful": "Reconnected.",
+      "wrong_project": "That code is for a different NexusPlan project."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "connected": {
+        "name": "Connected"
+      }
+    },
+    "sensor": {
+      "last_registry_sync": {
+        "name": "Last device sync"
+      },
+      "last_signal_sync": {
+        "name": "Last signal sync"
+      },
+      "devices_synced": {
+        "name": "Devices synced"
+      },
+      "signals_synced": {
+        "name": "Signal readings synced"
+      }
+    }
+  },
+  "services": {
+    "sync_now": {
+      "name": "Sync now",
+      "description": "Send the device registry and current signal readings to NexusPlan now.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Project",
+          "description": "Which connected project. Leave empty for all."
+        }
+      }
+    },
+    "get_map": {
+      "name": "Get map",
+      "description": "The NexusPlan floor plan as spatial context: floors, walls with signal loss, rooms and devices in metres, with each device's linked entity.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Project",
+          "description": "Which connected project. Leave empty for the first."
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "NexusPlan options",
+        "description": "The plan appears in the sidebar read-only for anyone who can see it. Signing in to NexusPlan inside it lets you edit.",
+        "data": {
+          "show_panel": "Show the plan in the sidebar",
+          "panel_admin_only": "Only administrators can see it"
+        }
+      }
+    }
+  }
+}

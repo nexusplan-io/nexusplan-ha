@@ -1,0 +1,2 @@
+# Pins Home Assistant 2026.9.3 — the version the integration is developed against.
+pytest-homeassistant-custom-component==0.13.366
