@@ -35,6 +35,11 @@ class NexusPlanInvalidCodeError(NexusPlanError):
 class NexusPlanRateLimitedError(NexusPlanConnectionError):
     """Too many requests — NexusPlan asked us to wait (HTTP 429)."""
 
+    def __init__(self, message: str, retry_after: int | None = None) -> None:
+        super().__init__(message)
+        #: Seconds NexusPlan asked us to wait (its Retry-After header), if given.
+        self.retry_after = retry_after
+
 
 class NexusPlanClient:
     """A NexusPlan project, as seen through one link token."""
@@ -60,7 +65,11 @@ class NexusPlanClient:
                 if resp.status == 401:
                     raise NexusPlanAuthError((body or {}).get("error", "Unauthorized"))
                 if resp.status == 429:
-                    raise NexusPlanRateLimitedError((body or {}).get("error", "Too many requests"))
+                    try:
+                        retry_after: int | None = int(resp.headers.get("Retry-After", ""))
+                    except ValueError:
+                        retry_after = None
+                    raise NexusPlanRateLimitedError((body or {}).get("error", "Too many requests"), retry_after)
                 if resp.status == 400 and code == "invalid_code":
                     raise NexusPlanInvalidCodeError(body.get("error"))
                 if resp.status >= 400:

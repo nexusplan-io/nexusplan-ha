@@ -122,3 +122,58 @@ async def test_sidebar_options(hass: HomeAssistant, aioclient_mock) -> None:
     await hass.config_entries.options.async_configure(result["flow_id"], {"show_panel": False, "panel_admin_only": False})
     await hass.async_block_till_done()
     assert _panels(hass) == {}
+
+
+def _registry_puts(aioclient_mock) -> int:
+    return sum(1 for method, url, *_ in aioclient_mock.mock_calls if method == "PUT" and str(url).endswith("/api/ha-link/registry"))
+
+
+async def test_rate_limited_registry_push_is_retried(hass: HomeAssistant, aioclient_mock) -> None:
+    """A 429 must not drop the change: re-push after NexusPlan's Retry-After."""
+    from datetime import timedelta
+    from homeassistant.util import dt as dt_util
+    from pytest_homeassistant_custom_component.common import async_fire_time_changed
+
+    aioclient_mock.get(f"{BASE}/api/ha-link/me", json={"project": {"id": "p1", "name": "Maple Street"}})
+    aioclient_mock.put(f"{BASE}/api/ha-link/registry", status=429, headers={"Retry-After": "60"},
+                       json={"error": "Too many requests", "code": "rate_limited"})
+    aioclient_mock.post(f"{BASE}/api/ha-link/signals", json={"ok": True})
+    entry = _entry(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    sync = entry.runtime_data.sync
+    assert sync.registry_pending and _registry_puts(aioclient_mock) == 1
+
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(f"{BASE}/api/ha-link/me", json={"project": {"id": "p1", "name": "Maple Street"}})
+    aioclient_mock.put(f"{BASE}/api/ha-link/registry", json={"ok": True})
+    aioclient_mock.post(f"{BASE}/api/ha-link/signals", json={"ok": True})
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=70))
+    await hass.async_block_till_done()
+    assert _registry_puts(aioclient_mock) == 1 and not sync.registry_pending
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_failed_registry_push_catches_up_on_the_next_signal_tick(hass: HomeAssistant, aioclient_mock) -> None:
+    """Any other failure (here a 503) is retried with the 5-minute signal push."""
+    from datetime import timedelta
+    from homeassistant.util import dt as dt_util
+    from pytest_homeassistant_custom_component.common import async_fire_time_changed
+
+    aioclient_mock.get(f"{BASE}/api/ha-link/me", json={"project": {"id": "p1", "name": "Maple Street"}})
+    aioclient_mock.put(f"{BASE}/api/ha-link/registry", status=503, json={"error": "busy"})
+    aioclient_mock.post(f"{BASE}/api/ha-link/signals", json={"ok": True})
+    entry = _entry(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    sync = entry.runtime_data.sync
+    assert sync.registry_pending
+
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(f"{BASE}/api/ha-link/me", json={"project": {"id": "p1", "name": "Maple Street"}})
+    aioclient_mock.put(f"{BASE}/api/ha-link/registry", json={"ok": True})
+    aioclient_mock.post(f"{BASE}/api/ha-link/signals", json={"ok": True})
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(minutes=5, seconds=5))
+    await hass.async_block_till_done()
+    assert _registry_puts(aioclient_mock) == 1 and not sync.registry_pending
+    assert await hass.config_entries.async_unload(entry.entry_id)

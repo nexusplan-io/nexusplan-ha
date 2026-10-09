@@ -20,7 +20,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later, async_track_time_interval
 from homeassistant.util import dt as dt_util
 
-from .api import NexusPlanAuthError, NexusPlanClient, NexusPlanError
+from .api import NexusPlanAuthError, NexusPlanClient, NexusPlanError, NexusPlanRateLimitedError
 from .const import REGISTRY_DEBOUNCE_SECONDS, SIGNAL_INTERVAL, SIGNAL_SYNC_UPDATED
 from .registry import build_registry, extract_signals
 
@@ -54,6 +54,14 @@ class NexusPlanSync:
         self.counts: dict[str, int] = {}
         self._unsubs: list[CALLBACK_TYPE] = []
         self._registry_timer: CALLBACK_TYPE | None = None
+        # A registry push that did not get through (NexusPlan busy, rate-limited
+        # or unreachable). Without this the change was dropped until the next
+        # edit in Home Assistant, and NexusPlan quietly kept a stale registry.
+        # It is retried when NexusPlan's Retry-After says, or on the next signal
+        # tick (every 5 minutes) — whichever comes first.
+        self.registry_pending = False
+        self._retry_timer: CALLBACK_TYPE | None = None
+        self._retry_after: int | None = None
 
     @property
     def connected(self) -> bool:
@@ -78,6 +86,9 @@ class NexusPlanSync:
         if self._registry_timer:
             self._registry_timer()
             self._registry_timer = None
+        if self._retry_timer:
+            self._retry_timer()
+            self._retry_timer = None
 
     @callback
     def _on_registry_event(self, _event: Event) -> None:
@@ -89,7 +100,14 @@ class NexusPlanSync:
         self._registry_timer = None
         await self.async_push_registry()
 
+    async def _on_retry_timer(self, _now: datetime) -> None:
+        self._retry_timer = None
+        if self.registry_pending:
+            await self.async_push_registry()
+
     async def _on_signal_timer(self, _now: datetime) -> None:
+        if self.registry_pending and not self._retry_timer:
+            await self.async_push_registry()
         await self.async_push_signals()
 
     async def async_sync_all(self) -> None:
@@ -99,10 +117,19 @@ class NexusPlanSync:
     async def async_push_registry(self) -> None:
         payload = build_registry(self.hass)
         payload["instance"] = await async_instance_info(self.hass, self.integration_version)
+        self._retry_after = None
         if await self._run(self.client.put_registry(payload)):
+            self.registry_pending = False
             self.last_registry_sync = dt_util.utcnow()
             self.counts = {k: len(payload[k]) for k in ("floors", "areas", "devices", "entities")}
             self._updated()
+            return
+        if self.needs_reauth:
+            return                       # re-pairing reloads the entry and pushes everything
+        self.registry_pending = True
+        if self._retry_after is not None and not self._retry_timer:
+            # Rebuilt at retry time, so the retry carries whatever changed since.
+            self._retry_timer = async_call_later(self.hass, min(self._retry_after + 5, 3600), self._on_retry_timer)
 
     async def async_push_signals(self) -> None:
         readings = extract_signals(self.hass)
@@ -127,6 +154,8 @@ class NexusPlanSync:
             self.entry.async_start_reauth(self.hass)
             return False
         except NexusPlanError as err:
+            if isinstance(err, NexusPlanRateLimitedError):
+                self._retry_after = err.retry_after
             if self.last_error != str(err):
                 _LOGGER.warning("NexusPlan sync failed: %s", err)
             self.last_error = str(err)
